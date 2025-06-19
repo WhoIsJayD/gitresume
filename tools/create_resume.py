@@ -246,6 +246,17 @@ async def create_resume_tool(
         return {"success": False, "error": "AI service not configured. Check API keys."}
 
     try:
+        # Truncate job_description to avoid exceeding model context window
+        max_job_desc_chars = 3000
+
+        if job_description:
+            # Normalize whitespace: replace multiple spaces/newlines/tabs with a single space
+            job_description = re.sub(r'\s+', ' ', job_description.strip())
+
+            # Trim to max allowed length, optionally add ellipsis if content was cut
+            if len(job_description) > max_job_desc_chars:
+                job_description = job_description[:max_job_desc_chars].rstrip() + "..."
+
         # Truncate content to fit within context window limits
         max_chars = 30000
         content_truncated = len(gitingest_content) > max_chars

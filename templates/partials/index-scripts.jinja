@@ -31,7 +31,12 @@
         const hiddenInput = document.getElementById('job_description_hidden');
         const repoUrl = document.getElementById('repo_url').value;
 
-        hiddenInput.value = checkbox.checked ? jobDescriptionTextarea.value.trim() : '';
+        // Strip newlines and excessive whitespace from job description
+        let processedJobDescription = '';
+        if (checkbox.checked) {
+            processedJobDescription = jobDescriptionTextarea.value.replace(/\s+/g, ' ').trim();
+        }
+        hiddenInput.value = checkbox.checked ? processedJobDescription : '';
 
         const path = repoUrl.replace('https://github.com/', '');
         history.pushState({}, '', '/' + path);
