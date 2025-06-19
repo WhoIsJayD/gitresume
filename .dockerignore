@@ -1,0 +1,17 @@
+Dockerfile
+.dockerignore
+.git
+.gitignore
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info
+.venv
+venv
+
+.env
+sessions/
+app.log
+*.log

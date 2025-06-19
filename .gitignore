@@ -1,0 +1,9 @@
+venv
+.venv
+.env
+__pycache__
+repos
+sessions
+*.log
+.idea
+env.yaml
