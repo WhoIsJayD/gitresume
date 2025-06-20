@@ -68,6 +68,8 @@ Transform raw codebase analysis into high-impact professional narrative by ident
 2. **Performance & Scale Impact** - Measurable improvements, optimization results, capacity enhancements  
 3. **Business & User Value** - Real-world problem solving, feature impact, user experience improvements
 4. **Engineering Excellence** - Code quality, maintainability, testing, documentation, DevOps practices
+5. Make sure that if job description is provided, the bullet points are tailored to align with the job requirements.
+6. Key words from the job description should be naturally integrated into the bullet points.
 
 ### **Writing Standards**
 - **Action-Driven Language**: Begin with powerful technical verbs (Architected, Engineered, Optimized, Implemented, Automated, Streamlined)
