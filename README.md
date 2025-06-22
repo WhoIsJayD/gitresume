@@ -1,41 +1,28 @@
-# GitResume 🚀
+# 🚀 GitResume
 
 *Transform your GitHub repositories into professional, ATS-optimized resumes using AI.*
 
-<table>
-  <tr>
-    <td>
-      <img src="static/screenshot.png" alt="GitResume Screenshot" width="320"/>
-    </td>
-    <td>
-      <a href="https://gitresume.live">
-        <img src="https://img.shields.io/badge/Live-gitresume.live-brightgreen?logo=google-chrome" alt="Live: gitresume.live"/>
-      </a><br/>
-      <a href="https://www.python.org/downloads/">
-        <img src="https://img.shields.io/badge/Python-3.11-blue.svg" alt="Python 3.11"/>
-      </a><br/>
-      <a href="https://fastapi.tiangolo.com/">
-        <img src="https://img.shields.io/badge/FastAPI-0.111.0-green.svg" alt="FastAPI"/>
-      </a><br/>
-      <a href="https://www.docker.com/">
-        <img src="https://img.shields.io/badge/Docker-20.10-blue.svg" alt="Docker"/>
-      </a><br/>
-      <a href="https://choosealicense.com/licenses/mit/">
-        <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"/>
-      </a><br/>
-      <a href="https://github.com/whoisjayd/gitresume/issues">
-        <img src="https://img.shields.io/github/issues/whoisjayd/gitresume" alt="GitHub Issues"/>
-      </a><br/>
-      <a href="https://github.com/whoisjayd/gitresume/stargazers">
-        <img src="https://img.shields.io/github/stars/whoisjayd/gitresume" alt="GitHub Stars"/>
-      </a><br/>
-      <a href="https://github.com/whoisjayd/gitresume">
-        <img src="https://img.shields.io/badge/Contributions-Welcome-brightgreen.svg" alt="Contributions Welcome"/>
-      </a>
-    </td>
-  </tr>
-</table>
+<div align="center">
+  <a href="https://res.cloudinary.com/dx9ctc074/video/upload/v1750616473/xir6vohwthjuybosq3wh.mp4">
+    <img src="https://res.cloudinary.com/dx9ctc074/image/upload/v1750616723/tqldkfra21junhhuycoq.gif" alt="GitResume Demo" width="100%"/>
+  </a>
+</div>
 
+
+<div align="center">
+
+[![Live](https://img.shields.io/badge/Live-gitresume.live-brightgreen?logo=google-chrome)](https://gitresume.live)
+[![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.111.0-green.svg)](https://fastapi.tiangolo.com/)
+[![Docker](https://img.shields.io/badge/Docker-20.10-blue.svg)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://choosealicense.com/licenses/mit/)
+[![GitHub Issues](https://img.shields.io/github/issues/whoisjayd/gitresume)](https://github.com/whoisjayd/gitresume/issues)
+[![GitHub Stars](https://img.shields.io/github/stars/whoisjayd/gitresume)](https://github.com/whoisjayd/gitresume/stargazers)
+[![Contributions Welcome](https://img.shields.io/badge/Contributions-Welcome-brightgreen.svg)](https://github.com/whoisjayd/gitresume)
+![visitor badge](https://visitor-badge.laobi.icu/badge?page_id=https://github.com/WhoIsJayD/gitresume)
+
+
+</div>
 
 ## 🌐 Live Demo
 
