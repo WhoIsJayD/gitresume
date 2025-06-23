@@ -129,7 +129,6 @@ initialize_grammar_checker()
 async def correct_resume_grammar(resume_data: Dict[str, Any]) -> Dict[str, Any]:
     if not text_processor:
         logger.warning("AI text processor not available. Applying basic local fixes.")
-        # Apply basic fixes if AI is not available
         for key, value in resume_data.items():
             if isinstance(value, str):
                 resume_data[key] = LocalGrammarFixer.fix_spacing_and_punctuation(value)
@@ -137,30 +136,54 @@ async def correct_resume_grammar(resume_data: Dict[str, Any]) -> Dict[str, Any]:
                 resume_data[key] = [LocalGrammarFixer.fix_spacing_and_punctuation(str(v)) for v in value]
         return resume_data
 
-    jobs = []
-    # Gather all text fields into processing jobs
+    texts_to_correct = []
+    update_callbacks = []
+    separator = "\n<--SEP-->\n"
+
+    # Gather all text fields into a single list for batch processing
     for field in ["project_title", "additional_notes", "future_plans", "potential_advancements"]:
-        if resume_data.get(field) and isinstance(resume_data[field], str):
-            jobs.append(TextProcessingJob(text=resume_data[field],
-                                          update_func=lambda text, f=field: resume_data.__setitem__(f, text)))
+        if resume_data.get(field) and isinstance(resume_data[field], str) and resume_data[field].strip():
+            texts_to_correct.append(resume_data[field])
+            update_callbacks.append(lambda text, f=field: resume_data.__setitem__(f, text))
+
     if isinstance(resume_data.get("bullet_points"), list):
         for i, bullet in enumerate(resume_data["bullet_points"]):
             if isinstance(bullet, str) and bullet.strip():
-                jobs.append(TextProcessingJob(text=bullet, update_func=lambda text, index=i: resume_data[
-                    "bullet_points"].__setitem__(index, text)))
+                texts_to_correct.append(bullet)
+                update_callbacks.append(
+                    lambda text, index=i: resume_data["bullet_points"].__setitem__(index, text.strip()))
+
     if isinstance(resume_data.get("interview_questions"), list):
         for i, item in enumerate(resume_data["interview_questions"]):
             if isinstance(item, dict):
-                if item.get("question"):
-                    jobs.append(TextProcessingJob(text=item["question"],
-                                                  update_func=lambda text, index=i: resume_data["interview_questions"][
-                                                      index].__setitem__("question", text)))
-                if item.get("answer"):
-                    jobs.append(TextProcessingJob(text=item["answer"],
-                                                  update_func=lambda text, index=i: resume_data["interview_questions"][
-                                                      index].__setitem__("answer", text)))
+                if item.get("question") and item["question"].strip():
+                    texts_to_correct.append(item["question"])
+                    update_callbacks.append(lambda text, index=i: resume_data["interview_questions"][index].__setitem__(
+                        "question", text.strip()))
+                if item.get("answer") and item["answer"].strip():
+                    texts_to_correct.append(item["answer"])
+                    update_callbacks.append(
+                        lambda text, index=i: resume_data["interview_questions"][index].__setitem__("answer",
+                                                                                                   text.strip()))
+    if not texts_to_correct:
+        logger.info("No text found for grammar correction.")
+        return resume_data
 
-    logger.info(f"Starting grammar correction for {len(jobs)} text chunks...")
-    await text_processor.process_jobs(jobs)
+    combined_text = separator.join(texts_to_correct)
+
+    def update_all(corrected_text):
+        corrected_items = corrected_text.split(separator)
+        if len(corrected_items) == len(texts_to_correct):
+            for i, corrected_item in enumerate(corrected_items):
+                update_callbacks[i](corrected_item)
+        else:
+            logger.warning(
+                f"Corrected items count mismatch. Expected {len(texts_to_correct)}, got {len(corrected_items)}. Skipping update."
+            )
+
+    job = TextProcessingJob(text=combined_text, update_func=update_all)
+
+    logger.info(f"Starting grammar correction for {len(texts_to_correct)} text chunks in a single batch...")
+    await text_processor.process_jobs([job])
     logger.info("Grammar correction complete.")
     return resume_data

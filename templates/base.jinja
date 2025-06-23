@@ -33,7 +33,9 @@
               content="{{ url_for('static', path='android-chrome-512x512.png') }}"/>    {% endblock %}
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/roughjs@latest/bundled/rough.js"></script>
-
+    <!-- 100% privacy-first analytics -->
+    <script data-collect-dnt="true" async src="https://scripts.simpleanalyticscdn.com/latest.js"></script>
+    <noscript><img src="https://queue.simpleanalyticscdn.com/noscript.gif?collect-dnt=true" alt="" referrerpolicy="no-referrer-when-downgrade"/></noscript>
 
     <script>
         tailwind.config = {

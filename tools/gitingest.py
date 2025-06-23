@@ -14,16 +14,17 @@ logger = logging.getLogger(__name__)
 # --- Configuration Constants ---
 IGNORE_DIRS: Set[str] = {
     ".git", "__pycache__", "node_modules", "venv", ".venv", "build", "dist",
-    ".pytest_cache", ".mypy_cache", "target", "out"
+    ".pytest_cache", ".mypy_cache", "target", "out", "docs"
 }
 IGNORE_EXTENSIONS: Set[str] = {
     ".pyc", ".pyo", ".pyd", ".db", ".sqlite3", ".log", ".exe", ".bin", ".so",
-    ".dll", ".o", ".a", ".obj", ".lib", ".zip", ".tar", ".gz", ".rar"
+    ".dll", ".o", ".a", ".obj", ".lib", ".zip", ".tar", ".gz", ".rar", ".md",
+    ".txt"
 }
 MAX_FILES_TO_PROCESS: int = 5000
 MAX_FILE_SIZE_BYTES: int = 1 * 1024 * 1024
 TEXT_FILE_EXTENSIONS: Set[str] = {
-    '.md', '.txt', '.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf',
+    '.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf',
     '.gitignore', '.dockerignore', '.editorconfig'
 }
 
@@ -115,7 +116,7 @@ async def _process_file(file_path: Path, repo_root: Path) -> Optional[Dict[str, 
 
         file_size = await asyncio.to_thread(get_size)
 
-        if file_path.suffix.lower() in IGNORE_EXTENSIONS or file_size > MAX_FILE_SIZE_BYTES or (
+        if file_size > MAX_FILE_SIZE_BYTES or (
                 file_size == 0 and file_path.suffix.lower() not in TEXT_FILE_EXTENSIONS):
             return None
 
@@ -152,14 +153,25 @@ async def gitingest_tool(repo_path: str) -> Dict[str, Any]:
     logger.info(f"Starting ingestion of repository: {repo_path}")
     tasks, file_paths_to_process, tree_structure = [], [], []
 
+    file_count = 0
     for root, dirs, files in os.walk(repo_root):
         dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
-        root_path, rel_root = Path(root), Path(root).relative_to(repo_root).as_posix()
-        if rel_root == ".": rel_root = ""
+        root_path = Path(root)
+        rel_root = root_path.relative_to(repo_root).as_posix()
+        if rel_root == ".":
+            rel_root = ""
         tree_structure.append(f"{rel_root}/")
+
         for file_name in files:
-            if len(file_paths_to_process) < MAX_FILES_TO_PROCESS:
-                file_paths_to_process.append(root_path / file_name)
+            if file_count >= MAX_FILES_TO_PROCESS:
+                break
+            file_path = root_path / file_name
+            if file_path.suffix.lower() in IGNORE_EXTENSIONS:
+                continue
+            file_paths_to_process.append(file_path)
+            file_count += 1
+        if file_count >= MAX_FILES_TO_PROCESS:
+            break
 
     for file_path in file_paths_to_process:
         tasks.append(_process_file(file_path, repo_root))

@@ -8,12 +8,15 @@ error handling, and performance optimizations for the cloning process.
 
 import asyncio
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Dict, Tuple, Optional
 from urllib.parse import urlparse
 
 from github import Github, GithubException
+
+from .gitingest import IGNORE_DIRS, IGNORE_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -111,11 +114,24 @@ async def _run_clone_command(clone_url: str, repo_dir: Path) -> None:
 
 
 def _get_repo_stats(repo_dir: Path) -> Tuple[int, int]:
-    """Calculates the total size and file count of the repository."""
+    """
+    Calculates the total size and file count of the repository,
+    respecting the ignore rules from gitingest.
+    """
+    total_size = 0
+    file_count = 0
     try:
-        files = [f for f in repo_dir.rglob('*') if f.is_file()]
-        total_size = sum(f.stat().st_size for f in files)
-        file_count = len(files)
+        for root, dirs, files in os.walk(repo_dir):
+            # Exclude ignored directories from traversal
+            dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+            for filename in files:
+                # Exclude ignored file extensions
+                if Path(filename).suffix.lower() in IGNORE_EXTENSIONS:
+                    continue
+
+                file_path = Path(root) / filename
+                total_size += file_path.stat().st_size
+                file_count += 1
         return total_size, file_count
     except Exception as e:
         logger.error(f"Failed to calculate repo stats for '{repo_dir}': {e}")

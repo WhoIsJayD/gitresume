@@ -1,4 +1,3 @@
-# --- Robust Logging Configuration ---
 import logging
 import os
 from pathlib import Path
@@ -54,7 +53,67 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.websockets import WebSocketState
 
 from tools import gitingest_tool, clone_repo_tool, create_resume_tool
+from tools.gitingest import IGNORE_DIRS, IGNORE_EXTENSIONS
 from tools.utils import robust_rmtree
+
+# --- Analytics Counters ---
+ANALYTICS_TOTAL_USERS_KEY = "analytics:total_users"
+ANALYTICS_TOTAL_REPOS_KEY = "analytics:total_repos_analyzed"
+ANALYTICS_TOTAL_REPO_SIZE_KEY = "analytics:total_repo_size_mb"
+ANALYTICS_TOTAL_FILES_KEY = "analytics:total_files_analyzed"
+ANALYTICS_MAX_REPO_SIZE_KEY = "analytics:max_repo_size_mb"
+ANALYTICS_MAX_FILES_KEY = "analytics:max_files_in_repo"
+
+async def increment_analytics_counter(key: str, unique_value: str = None):
+    if not redis_client:
+        return
+    if unique_value:
+        # Use a Redis set for unique values (e.g., users)
+        await asyncio.to_thread(redis_client.sadd, key, unique_value)
+    else:
+        await asyncio.to_thread(redis_client.incr, key)
+
+async def increment_repo_size_and_files(size_mb: float, file_count: int):
+    if not redis_client:
+        return
+    await asyncio.to_thread(redis_client.incrbyfloat, ANALYTICS_TOTAL_REPO_SIZE_KEY, size_mb)
+    await asyncio.to_thread(redis_client.incrby, ANALYTICS_TOTAL_FILES_KEY, file_count)
+    # Track max repo size
+    current_max_size = await asyncio.to_thread(redis_client.get, ANALYTICS_MAX_REPO_SIZE_KEY)
+    if not current_max_size or float(size_mb) > float(current_max_size):
+        await asyncio.to_thread(redis_client.set, ANALYTICS_MAX_REPO_SIZE_KEY, size_mb)
+    # Track max file count
+    current_max_files = await asyncio.to_thread(redis_client.get, ANALYTICS_MAX_FILES_KEY)
+    if not current_max_files or int(file_count) > int(current_max_files):
+        await asyncio.to_thread(redis_client.set, ANALYTICS_MAX_FILES_KEY, file_count)
+
+async def get_analytics():
+    if not redis_client:
+        return {
+            "total_users": None, "total_repos_analyzed": None, "total_repo_size_mb": None, "total_files_analyzed": None,
+            "avg_repo_size_mb": None, "avg_files_per_repo": None, "max_repo_size_mb": None, "max_files_in_repo": None
+        }
+    total_users = await asyncio.to_thread(redis_client.scard, ANALYTICS_TOTAL_USERS_KEY)
+    total_repos = await asyncio.to_thread(redis_client.get, ANALYTICS_TOTAL_REPOS_KEY)
+    total_repo_size = await asyncio.to_thread(redis_client.get, ANALYTICS_TOTAL_REPO_SIZE_KEY)
+    total_files = await asyncio.to_thread(redis_client.get, ANALYTICS_TOTAL_FILES_KEY)
+    max_repo_size = await asyncio.to_thread(redis_client.get, ANALYTICS_MAX_REPO_SIZE_KEY)
+    max_files = await asyncio.to_thread(redis_client.get, ANALYTICS_MAX_FILES_KEY)
+    total_repos_val = int(total_repos) if total_repos else 0
+    total_repo_size_val = float(total_repo_size) if total_repo_size else 0.0
+    total_files_val = int(total_files) if total_files else 0
+    avg_repo_size = (total_repo_size_val / total_repos_val) if total_repos_val else 0.0
+    avg_files = (total_files_val / total_repos_val) if total_repos_val else 0.0
+    return {
+        "total_users": total_users,
+        "total_repos_analyzed": total_repos_val,
+        "total_repo_size_mb": total_repo_size_val,
+        "total_files_analyzed": total_files_val,
+        "avg_repo_size_mb": avg_repo_size,
+        "avg_files_per_repo": avg_files,
+        "max_repo_size_mb": float(max_repo_size) if max_repo_size else 0.0,
+        "max_files_in_repo": int(max_files) if max_files else 0
+    }
 
 # Configuration
 ENV = os.getenv("ENVIRONMENT", "development").lower()
@@ -438,24 +497,78 @@ if CLOUDFLARE_ONLY:
         return await call_next(request)
 
 
-async def validate_repository_access(repo_url: str, github_token: str = None) -> Dict[str, Any]:
-    """Validate access to a GitHub repository."""
-    # if not repo_url.startswith("https://github.com/"):
-    #     return {"success": False, "is_public": False, "error_message": "Invalid GitHub URL format", "error_code": "invalid_url"}
+async def get_filtered_repo_stats(local_path: str) -> Dict[str, Any]:
+    """Calculates repository stats, ignoring specified directories and extensions."""
 
+    def calculate_stats():
+        file_count = 0
+        total_size = 0
+        repo_root = Path(local_path)
+        for root, dirs, files in os.walk(repo_root):
+            dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+            for file_name in files:
+                file_path = Path(root) / file_name
+                if file_path.suffix.lower() not in IGNORE_EXTENSIONS:
+                    try:
+                        total_size += file_path.stat().st_size
+                        file_count += 1
+                    except FileNotFoundError:
+                        continue
+        return {"file_count": file_count, "repo_size_mb": total_size / (1024 * 1024)}
+
+    return await asyncio.to_thread(calculate_stats)
+
+
+async def validate_repository_access(repo_url: str, github_token: str = None) -> Dict[str, Any]:
+    """Validate access to a GitHub repository with clear error handling and messaging.
+
+    Args:
+        repo_url: URL of the GitHub repository (e.g., https://github.com/owner/repo)
+        github_token: Optional GitHub personal access token for authentication
+
+    Returns:
+        Dictionary containing validation result, repository status, and error details if any
+    """
+    # Normalize and validate URL
+    if not repo_url.startswith("https://github.com/"):
+        return {
+            "success": False,
+            "is_public": False,
+            "error_message": "Invalid GitHub repository URL. Please use format: https://github.com/owner/repo",
+            "error_code": "invalid_url",
+            "owner": None,
+            "repo_name": None
+        }
+
+    # Extract owner and repo name
     path_part = repo_url.replace("https://github.com/", "").strip("/")
     segments = path_part.split("/")
     if len(segments) < 2:
-        return {"success": False, "is_public": False, "error_message": "Invalid repository path",
-                "error_code": "invalid_path"}
+        return {
+            "success": False,
+            "is_public": False,
+            "error_message": "Invalid repository path. Please provide both owner and repository name",
+            "error_code": "invalid_path",
+            "owner": None,
+            "repo_name": None
+        }
 
     owner, repo_name = segments[0], segments[1]
+    repo_full_name = f"{owner}/{repo_name}"
+
     try:
-        g = Github(github_token) if github_token else Github()
-        repo_obj = g.get_repo(f"{owner}/{repo_name}")
-        logging.info(
-            {"message": "Repository validation successful", "repo": repo_url, "is_public": not repo_obj.private,
-             "owner": owner, "repo_name": repo_name})
+        # Initialize GitHub client
+        github_client = Github(github_token) if github_token else Github()
+        repo_obj = github_client.get_repo(repo_full_name)
+
+        logging.info({
+            "message": "Successfully validated repository access",
+            "repo": repo_url,
+            "is_public": not repo_obj.private,
+            "owner": owner,
+            "repo_name": repo_name
+        })
+
         return {
             "success": True,
             "is_public": not repo_obj.private,
@@ -464,46 +577,61 @@ async def validate_repository_access(repo_url: str, github_token: str = None) ->
             "owner": owner,
             "repo_name": repo_name
         }
-    except GithubException as e:
-        error_details = {"repo": repo_url, "error": str(e), "status_code": getattr(e, 'status', 'unknown')}
-        if e.status == 404:
-            logging.warning({**error_details, "message": "Repository not found"})
-            # Try to check if the repo exists but is private (by attempting with no token)
-            if not github_token:
-                # Try with unauthenticated client to see if it exists at all
-                try:
-                    g_public = Github()
-                    g_public.get_repo(f"{owner}/{repo_name}")
-                except GithubException as e2:
-                    if e2.status == 404:
-                        return {"success": False, "is_public": False, "error_message": "Repository not found.",
-                                "error_code": "not_found"}
-                # If it exists but is private
-                return {"success": False, "is_public": False,
-                        "error_message": "Repository is private. Please provide a GitHub token or log in.",
-                        "error_code": "private_repo"}
-            else:
-                return {"success": False, "is_public": False,
-                        "error_message": "Repository not found or you lack access.",
-                        "error_code": "not_found_or_private"}
-        elif e.status == 403:
-            logging.warning({**error_details, "message": "Repository access forbidden"})
-            return {"success": False, "is_public": False, "error_message": "Access denied to repository.",
-                    "error_code": "access_denied"}
-        elif e.status == 401:
-            logging.warning({**error_details, "message": "Authentication required"})
-            return {"success": False, "is_public": False,
-                    "error_message": "Authentication required to access repository.", "error_code": "auth_required"}
-        else:
-            logging.error({**error_details, "message": "GitHub API error"})
-            return {"success": False, "is_public": False, "error_message": f"Failed to access repository: {str(e)}",
-                    "error_code": "api_error"}
-    except Exception as e:
-        logging.error({"message": "Unexpected error during repository validation", "repo": repo_url, "error": str(e),
-                       "type": type(e).__name__})
-        return {"success": False, "is_public": False,
-                "error_message": f"Unexpected error checking repository: {str(e)}", "error_code": "unexpected_error"}
 
+    except GithubException as e:
+        error_details = {
+            "repo": repo_url,
+            "error": str(e),
+            "status_code": getattr(e, 'status', 'unknown')
+        }
+
+        error_code = "api_error"
+        error_message = f"Failed to access repository: {str(e)}"
+
+        if e.status == 404:
+            logging.warning({**error_details, "message": "Repository not found or inaccessible"})
+            error_code = "not_found_or_private"
+            error_message = "Repository not found or requires authentication. Please verify the URL and access permissions."
+            if not github_token:
+                error_message = "Repository is private or does not exist. For private repositories, a GitHub token is required."
+
+        elif e.status == 403:
+            logging.warning({**error_details, "message": "Access to repository denied"})
+            error_code = "access_denied"
+            error_message = "Access denied. You don't have permission to view this repository."
+
+        elif e.status == 401:
+            logging.warning({**error_details, "message": "Authentication failed"})
+            error_code = "auth_required"
+            error_message = "Authentication failed. Please provide a valid GitHub token."
+
+        else:
+            logging.error({**error_details, "message": "GitHub API error occurred"})
+
+        return {
+            "success": False,
+            "is_public": False,
+            "error_message": error_message,
+            "error_code": error_code,
+            "owner": owner,
+            "repo_name": repo_name
+        }
+
+    except Exception as e:
+        logging.error({
+            "message": "Unexpected error during repository validation",
+            "repo": repo_url,
+            "error": str(e),
+            "type": type(e).__name__
+        })
+        return {
+            "success": False,
+            "is_public": False,
+            "error_message": f"An unexpected error occurred: {str(e)}",
+            "error_code": "unexpected_error",
+            "owner": owner,
+            "repo_name": repo_name
+        }
 
 async def enforce_private_repo_auth(validation_result: Dict[str, Any], session_data: Optional[GitHubSessionData],
                                     github_token: Optional[str]) -> tuple[bool, Optional[str]]:
@@ -553,11 +681,20 @@ async def health_check():
         except Exception as e:
             logging.error({"message": "Failed to count active sessions in Redis", "error": str(e)})
 
+    analytics = await get_analytics()
     return {
         "status": "healthy",
         "environment": ENV,
         "redis_connected": redis_client is not None,
         "active_sessions": active_sessions,
+        "total_users": analytics["total_users"],
+        "total_repos_analyzed": analytics["total_repos_analyzed"],
+        "total_repo_size_mb": analytics["total_repo_size_mb"],
+        "total_files_analyzed": analytics["total_files_analyzed"],
+        "avg_repo_size_mb": analytics["avg_repo_size_mb"],
+        "avg_files_per_repo": analytics["avg_files_per_repo"],
+        "max_repo_size_mb": analytics["max_repo_size_mb"],
+        "max_files_in_repo": analytics["max_files_in_repo"],
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
@@ -622,6 +759,8 @@ async def login(request: Request):
         created_at=datetime.now(timezone.utc).isoformat()
     )
     await save_session(session)
+    # --- Analytics: increment unique users ---
+    await increment_analytics_counter(ANALYTICS_TOTAL_USERS_KEY, session_id)
     logging.info({"message": "Created new session for login", "session_id": session_id})
 
     github_client_id = os.getenv("GITHUB_CLIENT_ID")
@@ -833,12 +972,13 @@ async def process_resume_generation(websocket: WebSocket, session_data: GitHubSe
     if local_path and Path(local_path).exists():
         await websocket.send_text(json.dumps(
             {"type": "status", "content": "🔄 Using existing repository clone", "generation_id": generation_id}))
+        stats = await get_filtered_repo_stats(local_path)
         clone_result = {
             "success": True,
             "local_path": local_path,
             "repo_name": f"{owner}/{repo_name}",
-            "repo_size_mb": sum(f.stat().st_size for f in Path(local_path).rglob('*') if f.is_file()) / (1024 * 1024),
-            "file_count": sum(1 for f in Path(local_path).rglob('*') if f.is_file())
+            "repo_size_mb": stats["repo_size_mb"],
+            "file_count": stats["file_count"]
         }
     else:
         await websocket.send_text(json.dumps(
@@ -851,7 +991,11 @@ async def process_resume_generation(websocket: WebSocket, session_data: GitHubSe
 
     # --- Strict file count check after clone ---
     if clone_result and clone_result.get("success") and local_path:
-        file_count = sum(1 for f in Path(local_path).rglob('*') if f.is_file())
+        if "file_count" not in clone_result:
+            stats = await get_filtered_repo_stats(local_path)
+            clone_result["file_count"] = stats["file_count"]
+            clone_result["repo_size_mb"] = stats["repo_size_mb"]
+        file_count = clone_result["file_count"]
         cache_key = f"large_repo:{owner}/{repo_name}"
         if redis_client:
             cached_large = await asyncio.to_thread(redis_client.get, cache_key)
@@ -911,6 +1055,12 @@ async def process_resume_generation(websocket: WebSocket, session_data: GitHubSe
             {"type": "error", "content": f"Failed to analyze repository: {error_msg}", "generation_id": generation_id}))
         await save_generation_data(session_data.session_id, generation_id, {"status": "error", "error": error_msg})
         return False
+
+    # --- Analytics: increment repos analyzed, repo size, and file count ---
+    await increment_analytics_counter(ANALYTICS_TOTAL_REPOS_KEY)
+    repo_size_mb = clone_result.get("repo_size_mb", 0)
+    file_count = clone_result.get("file_count", 0)
+    await increment_repo_size_and_files(repo_size_mb, file_count)
 
     await websocket.send_text(json.dumps(
         {"type": "status", "content": "📝 Generating resume content with AI...", "generation_id": generation_id}))
@@ -1065,6 +1215,8 @@ async def dynamic_github_route_post(request: Request, path: str, repo_url: str =
             job_description=job_description.strip() or None,
             status="pending"
         )
+        # --- Analytics: increment unique users ---
+        await increment_analytics_counter(ANALYTICS_TOTAL_USERS_KEY, session_id)
     else:
         session_data.repo_url = repo_url
         session_data.job_description = job_description.strip() or None
